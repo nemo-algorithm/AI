@@ -7,27 +7,48 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from copy import deepcopy as c
 import wandb
-wandb.init(project="dqn-atari-breakout", name="0901-min_eps=0.05_epsilon_step=1e-8_learing_rate=1e-3_replay=1e5_batch=128_106", monitor_gym=True)
+from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
-import IPython.display as display
+# import IPython.display as display
 import os
 
 USE_CUDA = torch.cuda.is_available()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-env = gym.make("BreakoutDeterministic-v4")
-state = env.reset()
+env_name = 'BreakoutDeterministic-v4'
+run_name = 'dqn_basic_{}'.format(env_name)
+
 Height = 84
 Width = 84
 
+episodes = 50000
+start_epsilon = 1.0
+min_epsilon = 0.05
+epsilon_step=1e-6
+replay_capacity = 30000
+learning_rate = 0.0001
+gamma = 0.99
+
+wandb.init(project='dqn', name=run_name, config={
+    'env_name': env_name,
+    'Height': Height,
+    'Width': Width,
+    'episodes': episodes,
+    'start_epsilon': start_epsilon,
+    'min_epsilon': min_epsilon,
+    'replay_capacity': replay_capacity,
+    'learning_rate': learning_rate,
+    'gamma': 0.99
+})
+
+env = gym.make(env_name)
+state = env.reset()
 
 def preprocessing(image):
 
-    image = image[30:-17, 7:-7, :]
     image = Image.fromarray(image)
-    image = image.resize((84, 84))
-    gray_filter = np.array([0.299, 0.587, 0.114])
-    image = np.einsum("...i,i->...", image, gray_filter)
+    image = image.resize((Height, Width))
+    image = np.array(image.convert('L'), dtype=np.float32)
     image = image * 2 / 255 - 1
 
     return image
@@ -83,16 +104,16 @@ class HISTORY:
             self.history[i] = c(x)
 
     def update(self, x):
-        self.history[0:4, :, :] = c(self.history[1:5, :, :])
+        self.history[0:4, :, :] = c(self.history[1:5, :, :])  # TODO maybe bottleneck
         self.history[4] = c(x)
 
 
 class DATA():
 
     def __init__(self, state, action, reward, done):
-        self.state = c(state)  # np array: 5 by 84 by 84
+        self.state = np.float16(state)  # np array: 5 by 84 by 84
         self.action = c(action)
-        self.reward = c(reward)
+        self.reward = np.float16(reward)
         self.done = c(done)
 
 
@@ -110,7 +131,7 @@ class REPLAY_MEMORY():
             self.replay.append(c(x))
 
         else:
-            pass
+            pass  # TODO?
 
         self.replay[self.time] = c(x)
         self.time = (self.time + 1) % self.capacity
@@ -141,8 +162,8 @@ def tensor(np_array):
     return torch.from_numpy(np_array).float().to(device)
 
 
-def train(env, episodes, learning_rate=0.001, epsilon=1.0, gamma=0.99, min_epsilon=0.05, epsilon_step=1e-8,
-          reset=False, replay_capacity=100000):
+def train(env, episodes, learning_rate=0.0001, epsilon=1.0, gamma=0.99, min_epsilon=0.05, epsilon_step=1e-6,
+          reset=False, replay_capacity = 100000):
     main_cnn = CNN((Height, Width, 4), 4).to(device)  # Q initialization
     target_cnn = CNN((Height, Width, 4), 4).to(device)
     target_cnn.load_state_dict(main_cnn.state_dict())
@@ -153,9 +174,9 @@ def train(env, episodes, learning_rate=0.001, epsilon=1.0, gamma=0.99, min_epsil
 
     if reset == False:
         try:
-            main_cnn.load_state_dict(torch.load("cnn.pkl"))
+            main_cnn.load_state_dict(torch.load('{}_cnn.pkl'.format(run_name)))
             target_cnn.load_state_dict(main_cnn.state_dict())
-            optimizer.load_state_dict(torch.load("optimizer.pkl"))
+            optimizer.load_state_dict(torch.load('{}_optimizer'.format(run_name)))
         except:
             pass
 
@@ -175,6 +196,8 @@ def train(env, episodes, learning_rate=0.001, epsilon=1.0, gamma=0.99, min_epsil
         history.start(state)
         reward = 0
 
+        count_action = [0, 0, 0, 0]
+
         while True:
 
             state = c(history.history[1:])
@@ -186,6 +209,7 @@ def train(env, episodes, learning_rate=0.001, epsilon=1.0, gamma=0.99, min_epsil
             else:
                 action = np.random.randint(0, 4)
 
+            count_action[action] += 1
             epsilon = max(min_epsilon, epsilon - epsilon_step)
 
             # Step
@@ -195,9 +219,10 @@ def train(env, episodes, learning_rate=0.001, epsilon=1.0, gamma=0.99, min_epsil
             history.update(state_next)
 
             reward += reward_step
-            replay_memory.update(DATA(history.history, action, reward_step, done))
+            replay_memory.update(DATA(history.history, action, reward_step, int(done)))
 
-            if step >= replay_capacity and step % 10 == 0:
+            if step >= replay_capacity//2 and step % 4 == 0:
+
                 main_cnn.train()
                 states, actions, rewards_step, states_next, dones = replay_memory.sample(128)
 
@@ -205,19 +230,18 @@ def train(env, episodes, learning_rate=0.001, epsilon=1.0, gamma=0.99, min_epsil
                 actions = torch.from_numpy(actions).to(device)
                 rewards_step = torch.from_numpy(rewards_step).float().to(device)
                 states_next = torch.from_numpy(states_next).float().to(device)
-                dones = torch.from_numpy(dones).to(device)
+                dones = torch.from_numpy(dones).float().to(device)
 
                 Q_main = torch.sum(main_cnn(states) * F.one_hot(actions, 4), dim=-1) # main: for training
 
                 with torch.no_grad():
-                    Q_target = rewards_step + gamma * torch.max(target_cnn(states_next), dim=-1)[0].detach()
+                    Q_target = rewards_step + (1-dones) * gamma * torch.max(target_cnn(states_next), dim=-1)[0].detach()
 
                 optimizer.zero_grad()
 
                 loss = criterion(Q_main, Q_target)
                 loss.backward()
                 optimizer.step()
-                wandb.log({"Loss": loss.to("cpu").item()})
 
             if step % 10000 == 0:
                 target_cnn.load_state_dict(main_cnn.state_dict())
@@ -225,24 +249,34 @@ def train(env, episodes, learning_rate=0.001, epsilon=1.0, gamma=0.99, min_epsil
             if done:
                 break
 
-        if episode % 300 == 0:
-            display.clear_output()
+        if episode % 100 == 0:
+
+            # display.clear_output()
             print(step, episode)
-            plt.title("reward_history, episode : {} epsilon : {}".format(episode, epsilon))
+            plt.title("reward_history, episode: {} epsilon: {}".format(episode, epsilon))
             plt.plot(reward_history)
             plt.show()
 
         reward_history.append(reward)
         count_action_history.append(count_action)
-        wandb.log({"Reward": reward, "Step": episode, "epsilon": epsilon, "step": step})
+        wandb.log({"Reward": reward, "episode": episode, "epsilon": epsilon, "step": step})
 
         if episode % 1000 == 0:
-            torch.save(target_cnn.state_dict(), "cnn.pkl")
-            torch.save(optimizer.state_dict(), "optimizer.pkl")
-            torch.save(target_cnn.state_dict(), os.path.join(wandb.run.dir, 'model.pt'))
-            torch.save(optimizer.state_dict(), os.path.join(wandb.run.dir, 'optimizer.pt'))
+
+            torch.save(target_cnn.state_dict(), '{}_cnn.pkl'.format(run_name))
+            torch.save(optimizer.state_dict(), '{}_cnn.pkl'.format(run_name))
+            torch.save(target_cnn.state_dict(), os.path.join(wandb.run.dir, '{}_model.pt'.format(run_name)))
+            torch.save(optimizer.state_dict(), os.path.join(wandb.run.dir, '{}_optimizer.pt'.format(run_name)))
 
     return cnn, reward_history
 
-
-cnn, reward_history = train(env, 1000000, epsilon=1.0, reset=True)
+cnn, reward_history = train(env,
+                            episodes,
+                            learning_rate=learning_rate,
+                            epsilon=start_epsilon,
+                            gamma=gamma,
+                            min_epsilon=min_epsilon,
+                            epsilon_step=epsilon_step,
+                            reset=True,
+                            replay_capacity=replay_capacity
+                            )
