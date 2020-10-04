@@ -1,4 +1,4 @@
-### AI
+## AI
 > Created Date : 2020-08-20, Last Update : 2020-09-04<br>
 > Writer : Nemo (nemo-algorithm AT korea.ac.kr)
 
@@ -10,11 +10,9 @@ IELab에서 학부연구생으로 공부하며 구현한 **코드**를 올리는
 
 ---
 
-##### 1. RNN (with numpy)
+#### 1. RNN (with numpy)
 
 > numpy
-
-
 
 **Result**
 
@@ -35,18 +33,16 @@ My prize of man a demenn, I kindss malmmess. Who dreast do dear comeing lown but
 
 ---
 
-##### 2. MountainCar-v0 (Q-Learning)
+#### 2. MountainCar-v0 (Q-Learning)
 
 > gym
 
 
 ---
 
-##### 3. Atari (DQN)
+#### 3. Atari (DQN)
 
 > gym, PyTorch, wandb
-
-
 
 **Result** (BreakoutDeterministic-v4, 3 days)
 
