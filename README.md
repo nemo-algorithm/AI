@@ -6,7 +6,7 @@
 
 IELab에서 학부연구생으로 공부하며 구현한 **코드**를 올리는 저장소입니다.
 
-인턴 세미나에서 발표한 내용은 [이 링크](https://github.com/Intelligence-Engineering-LAB-KU/Seminar/tree/master/summer_2020/intern1)에 있습니다.
+인턴 세미나에서 발표한 내용은 [링크1](https://github.com/Intelligence-Engineering-LAB-KU/Seminar/tree/master/summer_2020/intern1)과 [링크2](https://github.com/Intelligence-Engineering-LAB-KU/Seminar/tree/master/fall_2020/intern1)에 있습니다.
 
 ---
 
